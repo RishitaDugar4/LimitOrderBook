@@ -3,6 +3,31 @@
 #include <numeric>
 #include <chrono>
 #include <ctime>
+#include <optional>
+#include <algorithm>
+
+namespace {
+
+// mktime() is not guaranteed thread-safe by POSIX (unlike localtime_r), and
+// in practice can corrupt its result when called concurrently from many
+// freshly-spawned threads -- observed here as an occasional wildly-wrong
+// `next` (and therefore a garbage `till`) when many Orderbook instances are
+// constructed back-to-back, each spinning up its own pruning thread that
+// calls mktime() on its very first loop iteration. That garbage duration
+// then made std::condition_variable::wait_for throw
+// std::system_error("Invalid argument") instead of just waiting. Serialize
+// all mktime() calls process-wide to eliminate the race at its source.
+std::mutex& MkTimeMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::time_t SafeMkTime(std::tm& parts) {
+    std::scoped_lock lock { MkTimeMutex() };
+    return mktime(&parts);
+}
+
+}  // namespace
 
 void Orderbook::PruneGoodForDayOrders() {
     using namespace std::chrono;
@@ -12,7 +37,7 @@ void Orderbook::PruneGoodForDayOrders() {
         const auto now = system_clock::now();
         const auto now_c = system_clock::to_time_t(now);
         std::tm now_parts;
-        localtime_s(&now_parts, &now_c);
+        localtime_r(&now_c, &now_parts);
 
         if (now_parts.tm_hour >= end.count()) {
             now_parts.tm_mday += 1;
@@ -22,32 +47,44 @@ void Orderbook::PruneGoodForDayOrders() {
         now_parts.tm_min = 0;
         now_parts.tm_sec = 0;
 
-        auto next = system_clock::from_time_t(mktime(&now_parts));
+        auto next = system_clock::from_time_t(SafeMkTime(now_parts));
         auto till = next - now + milliseconds(100);
+
+        // Defense in depth: regardless of cause, never hand wait_for() a
+        // duration outside a sane range (the real range is always (0, 24h]).
+        if (till < milliseconds(100)) {
+            till = milliseconds(100);
+        } else if (till > hours(25)) {
+            till = hours(25);
+        }
 
         {
             std::unique_lock ordersLock { ordersMutex_ };
-            if (shutdown_.load(std::memory_order_acquire) || shutdownConditionVariable_.wait_for(ordersLock, till == std::cv_status::no_timeout)) {
+            if (shutdownConditionVariable_.wait_for(ordersLock, till, [this] { return shutdown_.load(std::memory_order_acquire); })) {
                 return;
             }
         }
 
-        OrderIds orderIds;
-
-        {
-            std::scoped_lock ordersLock { ordersMutex_ };
-
-            for (const auto& [_, entry] : orders_ ) {
-                const auto& [orders, _] = entry;
-
-                if (order->GetOrderType() != OrderType::GoodForDay) {
-                    continue;
-                }
-                orderIds.push_back(order->GetOrderId());
-            }
-        }
-        CancelOrders(orderIds);
+        CancelGoodForDayOrders();
     }
+}
+
+void Orderbook::CancelGoodForDayOrders() {
+    OrderIds orderIds;
+
+    {
+        std::scoped_lock ordersLock { ordersMutex_ };
+
+        for (const auto& [_, entry] : orders_ ) {
+            const auto& [order, entryIterator] = entry;
+
+            if (order->GetOrderType() != OrderType::GoodForDay) {
+                continue;
+            }
+            orderIds.push_back(order->GetOrderId());
+        }
+    }
+    CancelOrders(orderIds);
 }
 
 void Orderbook::CancelOrders(OrderIds orderIds) {
@@ -59,7 +96,7 @@ void Orderbook::CancelOrders(OrderIds orderIds) {
 }
 
 void Orderbook::CancelOrderInternal(OrderId orderId) {
-    if (!orders.contains(orderId)) {
+    if (!orders_.contains(orderId)) {
         return;
     }
 
@@ -101,7 +138,7 @@ void Orderbook::UpdateLevelData(Price price, Quantity quantity, LevelData::Actio
     auto& data = data_[price];
 
     data.count_ += action == LevelData::Action::Remove ? -1 : action == LevelData::Action::Add ? 1 : 0;
-    if (action == LevelData::Action::Remove || action == LevelData::Action:Match) {
+    if (action == LevelData::Action::Remove || action == LevelData::Action::Match) {
         data.quantity_ -= quantity;
     } else {
         data.quantity_ += quantity;
@@ -112,7 +149,7 @@ void Orderbook::UpdateLevelData(Price price, Quantity quantity, LevelData::Actio
     }
 }
 
-bool Orderbook::CanFullyFill(Side side, Price pride, Quantity quantity) const {
+bool Orderbook::CanFullyFill(Side side, Price price, Quantity quantity) const {
     if (!CanMatch(side, price)) {
         return false;
     }
@@ -128,8 +165,8 @@ bool Orderbook::CanFullyFill(Side side, Price pride, Quantity quantity) const {
     }
 
     for (const auto& [levelPrice, levelData] : data_) {
-        if (threshold.has_value() && 
-            (side == Side::Buy && threshold.value() > levelPrice) || (side == Side::Sell && threshold.value() < levelPrice)) {
+        if (threshold.has_value() &&
+            ((side == Side::Buy && threshold.value() > levelPrice) || (side == Side::Sell && threshold.value() < levelPrice))) {
             continue;
         }
 
@@ -147,7 +184,7 @@ bool Orderbook::CanFullyFill(Side side, Price pride, Quantity quantity) const {
     return false;
 }
 
-bool OrderBook::CanMatch(Side side, Price price) const {
+bool Orderbook::CanMatch(Side side, Price price) const {
     if (side == Side::Buy) {
         
         if (asks_.empty()) { return false; }
@@ -163,7 +200,7 @@ bool OrderBook::CanMatch(Side side, Price price) const {
     }
 }
 
-Trades OrderBook::MatchOrders() {
+Trades Orderbook::MatchOrders() {
     Trades trades;
     trades.reserve(orders_.size());
 
@@ -195,22 +232,20 @@ Trades OrderBook::MatchOrders() {
             }
 
             trades.push_back(Trade {
-                TradeInfo { bid->GetPrice(), quantity, bid->IsFilled() },
-                TradeInfo { ask->GetPrice(), quantity, ask->IsFilled() }
+                TradeInfo { bid->GetOrderId(), bid->GetPrice(), quantity },
+                TradeInfo { ask->GetOrderId(), ask->GetPrice(), quantity }
             });
 
             OnOrderMatched(bid->GetPrice(), quantity, bid->IsFilled());
-            OnOrderMatched(ask->GetPrice(), quanitty, ask->IsFilled());
+            OnOrderMatched(ask->GetPrice(), quantity, ask->IsFilled());
         }
 
         if (bids.empty()) {
             bids_.erase(bidPrice);
-            asks_.erase(bidPrice);
         }
 
         if (asks.empty()) {
-            bids_.erase(bidPrice);
-            asks_.erase(bidPrice);
+            asks_.erase(askPrice);
         }
     }
 
@@ -218,7 +253,7 @@ Trades OrderBook::MatchOrders() {
         auto& [_, bids] = *bids_.begin();
         auto& order = bids.front();
         if (order->GetOrderType() == OrderType::FillAndKill) {
-            CancelOrder(order->GetOrderId());
+            CancelOrderInternal(order->GetOrderId());
         }
     }
 
@@ -226,23 +261,92 @@ Trades OrderBook::MatchOrders() {
         auto& [_, asks] = *asks_.begin();
         auto& order = asks.front();
         if (order->GetOrderType() == OrderType::FillAndKill) {
-            CancelOrder(order->GetOrderId());
+            CancelOrderInternal(order->GetOrderId());
         }
     }
     return trades;
 }
 
-Orderbook::Orderbook() : ordersPruneThread_ { [this] {PruneGoodForDayOrders(); } } {}
+Orderbook::Orderbook(std::size_t orderPoolCapacity) :
+    orderPool_ { orderPoolCapacity },
+    matchingEngineThread_ { [this] { RunMatchingEngine(); } },
+    ordersPruneThread_ { [this] { PruneGoodForDayOrders(); } }
+{}
 
 Orderbook::~Orderbook() {
-    shutdown_.store(true, std::memory_order_release);
+    engineShutdown_.store(true, std::memory_order_release);
+    matchingEngineThread_.join();
+
+    {
+        std::scoped_lock ordersLock { ordersMutex_ };
+        shutdown_.store(true, std::memory_order_release);
+    }
     shutdownConditionVariable_.notify_one();
     ordersPruneThread_.join();
 }
 
-Trades Orderbook::AddOrder(OrderPointer order) {
+void Orderbook::RunMatchingEngine() {
+    while (true) {
+        auto* slot = commandQueue_.Front();
+        if (slot == nullptr) {
+            if (engineShutdown_.load(std::memory_order_acquire)) {
+                return;
+            }
+            std::this_thread::yield();
+            continue;
+        }
+
+        OrderCommand* command = *slot;
+        commandQueue_.Pop();
+
+        ApplyCommand(*command);
+        command->ready.store(true, std::memory_order_release);
+    }
+}
+
+void Orderbook::ApplyCommand(OrderCommand& command) {
     std::scoped_lock ordersLock { ordersMutex_ };
 
+    switch (command.type) {
+        case OrderCommand::Type::Add:
+            command.result = AddOrderInternal(std::move(command.order));
+            break;
+        case OrderCommand::Type::Cancel:
+            CancelOrderInternal(command.cancelOrderId);
+            break;
+    }
+}
+
+Trades Orderbook::Submit(OrderCommand& command) {
+    OrderCommand* commandPtr = &command;
+    while (!commandQueue_.TryPush(commandPtr)) {
+        std::this_thread::yield();
+    }
+
+    while (!command.ready.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    return std::move(command.result);
+}
+
+Trades Orderbook::AddOrder(OrderPointer order) {
+    OrderCommand command;
+    command.type = OrderCommand::Type::Add;
+    command.order = std::move(order);
+    return Submit(command);
+}
+
+void Orderbook::CancelOrder(OrderId orderId) {
+    OrderCommand command;
+    command.type = OrderCommand::Type::Cancel;
+    command.cancelOrderId = orderId;
+    Submit(command);
+}
+
+// Assumes ordersMutex_ is already held by the caller (ApplyCommand), since
+// this only ever runs on the matching-engine thread.
+Trades Orderbook::AddOrderInternal(OrderPointer order) {
     if (orders_.contains(order->GetOrderId())) {
         return { };
     }
@@ -286,11 +390,6 @@ Trades Orderbook::AddOrder(OrderPointer order) {
     return MatchOrders();
 }
 
-void Orderbook::CancelOrder(OrderId orderId) {
-    std::scoped_lock ordersLock{ ordersMutex_ };
-    CancelOrderInternal(orderId);
-}
-
 Trades Orderbook::ModifyOrder(OrderModify order) {
     OrderType orderType;
 
@@ -305,7 +404,7 @@ Trades Orderbook::ModifyOrder(OrderModify order) {
     }
 
     CancelOrder(order.GetOrderId());
-    return AddOrder(order.ToOrderPointer(orderType));
+    return AddOrder(MakeOrder(orderType, order.GetOrderId(), order.GetSide(), order.GetPrice(), order.GetQuantity()));
 }
 
 std::size_t Orderbook::Size() const {
@@ -316,12 +415,12 @@ std::size_t Orderbook::Size() const {
 OrderbookLevelInfos Orderbook::GetOrderInfos() const {
     LevelInfos bidInfos, askInfos;
     bidInfos.reserve(orders_.size());
-    askInfos.reserve(orders.size());
+    askInfos.reserve(orders_.size());
 
     auto CreateLevelInfos = [] (Price price, const OrderPointers& orders) {
-        return LevelInfos{ price, std::accumulate(orders.begin(), orders.end(), (Quantity) 0, 
+        return LevelInfo{ price, std::accumulate(orders.begin(), orders.end(), (Quantity) 0,
             [](Quantity runningSum, const OrderPointer& order)
-            { return runningSum + oder->GetRemainingQuantity(); }) };
+            { return runningSum + order->GetRemainingQuantity(); }) };
     };
 
     for (const auto& [price, orders] : bids_ ) {
@@ -332,5 +431,5 @@ OrderbookLevelInfos Orderbook::GetOrderInfos() const {
         askInfos.push_back(CreateLevelInfos(price, orders));
     }
 
-    return OrderookLevelInfos { bidInfos, askInfos };
+    return OrderbookLevelInfos { bidInfos, askInfos };
 }
