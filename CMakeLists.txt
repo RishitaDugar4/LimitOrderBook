@@ -12,7 +12,8 @@ include(FetchContent)
 
 FetchContent_Declare(
     lockfree
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../lockfree-lib
+    GIT_REPOSITORY https://github.com/RishitaDugar4/lockfree-lib.git
+    GIT_TAG v0.1.0
 )
 FetchContent_MakeAvailable(lockfree)
 
