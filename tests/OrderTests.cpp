@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "Order.h"
-#include "OrderModify.h"
-#include "Constants.h"
+#include "orderbook/Order.h"
+#include "orderbook/OrderModify.h"
+#include "orderbook/Constants.h"
 
 TEST_CASE("A freshly constructed order is unfilled", "[order]") {
     Order order(OrderType::GoodTillCancel, 1, Side::Buy, 100, 10);

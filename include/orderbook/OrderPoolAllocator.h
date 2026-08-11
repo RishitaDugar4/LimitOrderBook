@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "OrderMemoryPool.h"
+#include "orderbook/OrderMemoryPool.h"
 
 // Minimal C++ Allocator adapter over OrderMemoryPool, intended for use
 // with std::allocate_shared<Order>. allocate_shared rebinds the allocator

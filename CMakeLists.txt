@@ -31,13 +31,29 @@ add_library(orderbook_lib
     Orderbook.cpp
     OrderMemoryPool.cpp
 )
-target_include_directories(orderbook_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(orderbook_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(orderbook_lib PUBLIC lockfree::lockfree absl::btree)
 find_package(Threads REQUIRED)
 target_link_libraries(orderbook_lib PUBLIC Threads::Threads)
 
 add_executable(limit_order_book main.cpp)
 target_link_libraries(limit_order_book PRIVATE orderbook_lib)
+
+option(LOB_BUILD_PYTHON "Build the pybind11 Python module (orderbook_py)" OFF)
+
+if(LOB_BUILD_PYTHON)
+    include(FetchContent)
+
+    FetchContent_Declare(
+        pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG v2.13.6
+    )
+    FetchContent_MakeAvailable(pybind11)
+
+    pybind11_add_module(orderbook_py bindings/orderbook_bindings.cpp)
+    target_link_libraries(orderbook_py PRIVATE orderbook_lib)
+endif()
 
 option(LOB_BUILD_BENCHMARKS "Build the Google Benchmark suite" ON)
 

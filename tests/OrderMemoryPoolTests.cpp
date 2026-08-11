@@ -7,10 +7,10 @@
 #include <thread>
 #include <vector>
 
-#include "Order.h"
-#include "OrderMemoryPool.h"
-#include "OrderPoolAllocator.h"
-#include "Orderbook.h"
+#include "orderbook/Order.h"
+#include "orderbook/OrderMemoryPool.h"
+#include "orderbook/OrderPoolAllocator.h"
+#include "orderbook/Orderbook.h"
 
 // ---------------------------------------------------------------------------
 // Global operator new/delete interception, scoped to this test binary only.

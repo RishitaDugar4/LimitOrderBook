@@ -4,7 +4,7 @@
 #include <thread>
 #include <vector>
 
-#include "OrderIdGenerator.h"
+#include "orderbook/OrderIdGenerator.h"
 
 TEST_CASE("IDs start at 1 by default and increase by exactly 1 each call", "[order-id-generator]") {
     OrderIdGenerator generator;

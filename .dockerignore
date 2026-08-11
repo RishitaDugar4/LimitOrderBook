@@ -1,0 +1,13 @@
+# Keep build contexts small and cache-friendly.
+.git
+.venv
+build
+build-py
+build-tsan
+build-tsan/**
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+*.log
+.vscode

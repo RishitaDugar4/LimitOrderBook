@@ -1,0 +1,129 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #262d38;
+  --text: #e6edf3;
+  --muted: #7d8590;
+  --buy: #26a269;
+  --buy-dim: rgba(38, 162, 105, 0.18);
+  --sell: #e5534b;
+  --sell-dim: rgba(229, 83, 75, 0.18);
+  --accent: #4493f8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+  font-size: 14px;
+}
+
+.app { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px;
+}
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 600; }
+
+.conn { font-size: 12px; padding: 3px 10px; border-radius: 12px; }
+.conn.up { color: var(--buy); background: var(--buy-dim); }
+.conn.down { color: var(--sell); background: var(--sell-dim); }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 320px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.panel-title {
+  font-weight: 600; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin-bottom: 10px;
+}
+
+.muted { color: var(--muted); }
+.pad { padding: 8px 2px; }
+
+/* Ladder */
+.ladder-header, .tape-header {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--muted); padding: 0 6px 6px;
+}
+.ladder-row {
+  position: relative; display: flex; justify-content: space-between;
+  padding: 3px 6px; font-variant-numeric: tabular-nums; overflow: hidden;
+}
+.depth-bar { position: absolute; top: 0; bottom: 0; right: 0; opacity: 0.9; z-index: 0; }
+.ladder-row .price, .ladder-row .qty { position: relative; z-index: 1; }
+.ladder-row.ask .depth-bar { background: var(--sell-dim); }
+.ladder-row.ask .price { color: var(--sell); }
+.ladder-row.bid .depth-bar { background: var(--buy-dim); }
+.ladder-row.bid .price { color: var(--buy); }
+
+.ladder-spread {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 6px; margin: 6px 0; border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.spread-val { color: var(--muted); font-size: 12px; }
+
+/* Trade tape */
+.tape-rows { max-height: 420px; overflow-y: auto; }
+.tape-row {
+  display: grid; grid-template-columns: 1.4fr 0.8fr 0.6fr 1fr; gap: 6px;
+  padding: 3px 6px; font-variant-numeric: tabular-nums; font-size: 13px;
+}
+.tape-header { display: grid; grid-template-columns: 1.4fr 0.8fr 0.6fr 1fr; gap: 6px; }
+.tape-row .price { color: var(--accent); }
+.tape-row .ids { color: var(--muted); font-size: 12px; }
+
+/* Order entry */
+.entry form { display: flex; flex-direction: column; gap: 10px; }
+.entry label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.entry input, .entry select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 8px; font-size: 14px;
+}
+.entry input:disabled { opacity: 0.4; }
+
+.side-toggle { display: flex; gap: 8px; }
+.side-toggle button {
+  flex: 1; padding: 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--muted); cursor: pointer; font-weight: 600;
+}
+.side-toggle button.buy.active { background: var(--buy-dim); color: var(--buy); border-color: var(--buy); }
+.side-toggle button.sell.active { background: var(--sell-dim); color: var(--sell); border-color: var(--sell); }
+
+.submit {
+  padding: 10px; border-radius: 6px; border: none; cursor: pointer;
+  font-weight: 700; color: #fff; margin-top: 4px;
+}
+.submit.buy { background: var(--buy); }
+.submit.sell { background: var(--sell); }
+.submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cancel-form { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cancel-row { display: flex; gap: 8px; }
+.cancel-row input { flex: 1; }
+.cancel-btn {
+  background: var(--bg); border: 1px solid var(--sell); color: var(--sell);
+  border-radius: 6px; padding: 0 14px; cursor: pointer; font-weight: 600;
+}
+.cancel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.status { margin-top: 12px; padding: 8px; border-radius: 6px; font-size: 13px; }
+.status.ok { background: var(--buy-dim); color: var(--buy); }
+.status.err { background: var(--sell-dim); color: var(--sell); }
+
+.foot { margin-top: 16px; text-align: center; color: var(--muted); font-size: 12px; }

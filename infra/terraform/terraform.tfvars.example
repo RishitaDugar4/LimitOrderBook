@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit the real file.
+aws_region    = "us-east-1"
+instance_type = "t3.small"
+
+ssh_key_name = "your-existing-ec2-keypair-name"
+
+# Lock access down to your own IP. Find it with: curl ifconfig.me
+admin_cidr = "1.2.3.4/32"
+
+db_username = "lob"
+db_name     = "orderbook"
+# Prefer exporting TF_VAR_db_password instead of putting it here:
+#   export TF_VAR_db_password='...'
+db_password = "change_me_strong"
